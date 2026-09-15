@@ -14,10 +14,10 @@
             </div>
         </div>
         <h1>REGISTER</h1>
-        <p class="subtitle">Bikin akun baru</p>
+        <p class="subtitle">Bikin akun baru · Dapet nomor unik otomatis</p>
 
         <form id="registerForm">
-            <input type="text" id="username" placeholder="Username" required>
+            <input type="text" id="username" placeholder="Username (huruf kecil, tanpa spasi)" required>
             <input type="text" id="fullName" placeholder="Nama Lengkap">
             <input type="email" id="email" placeholder="Email" required>
             <input type="password" id="password" placeholder="Password (min 6 karakter)" required>
@@ -41,11 +41,25 @@
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                const username = document.getElementById('username').value;
-                const fullName = document.getElementById('fullName').value;
+                const username = document.getElementById('username').value.trim().toLowerCase();
+                const fullName = document.getElementById('fullName').value.trim();
                 const email = document.getElementById('email').value;
                 const password = document.getElementById('password').value;
 
+                // Validasi username
+                if (!/^[a-z0-9_]+$/.test(username)) {
+                    error.textContent = 'Username cuma boleh huruf kecil, angka, dan underscore (_)';
+                    error.classList.add('show');
+                    return;
+                }
+
+                if (password.length < 6) {
+                    error.textContent = 'Password minimal 6 karakter';
+                    error.classList.add('show');
+                    return;
+                }
+
+                // Register ke Supabase Auth
                 const { data, error: err } = await window.supabase.auth.signUp({
                     email, password
                 });
@@ -56,6 +70,7 @@
                     return;
                 }
 
+                // Insert profile (nomor bakal auto-generate dari trigger)
                 if (data.user) {
                     const { error: profileErr } = await window.supabase.from('profiles').insert({
                         id: data.user.id,
@@ -68,14 +83,24 @@
                         error.classList.add('show');
                         return;
                     }
-                }
 
-                success.textContent = 'Berhasil daftar! Silakan login.';
-                success.classList.add('show');
+                    // Cek nomor yang dikasih
+                    const { data: profile } = await window.supabase.from('profiles')
+                        .select('phone_number')
+                        .eq('id', data.user.id)
+                        .single();
+
+                    if (profile && profile.phone_number) {
+                        success.textContent = 'Berhasil daftar! Nomor lo: ' + profile.phone_number + '. Simpan nomor ini ya!';
+                    } else {
+                        success.textContent = 'Berhasil daftar! Silakan login.';
+                    }
+                    success.classList.add('show');
+                }
 
                 setTimeout(() => {
                     window.location.href = '/login.html';
-                }, 2000);
+                }, 4000);
             });
         });
     </script>
