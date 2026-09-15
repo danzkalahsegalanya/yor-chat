@@ -76,7 +76,6 @@
         </div>
     </div>
 
-    <!-- MODAL NEW CHAT -->
     <div class="modal" id="newChatModal">
         <div class="modal-box">
             <h3>Chat Baru</h3>
@@ -90,7 +89,6 @@
         </div>
     </div>
 
-    <!-- MODAL CHAT MENU -->
     <div class="modal" id="chatMenuModal">
         <div class="modal-box">
             <h3>Menu Chat</h3>
@@ -109,9 +107,11 @@
         let currentProfile = null;
         let currentChatUser = null;
         let messagesSubscription = null;
+        let globalMessagesSubscription = null;
         let presenceChannel = null;
         let typingChannel = null;
         let onlineCheckInterval = null;
+        let chatListRefreshTimeout = null;
         let typingTimeout = null;
         let isTyping = false;
 
@@ -126,15 +126,15 @@
             await loadMyProfile();
             await loadChatList();
             setupPresence();
+            setupGlobalMessagesListener();
 
-            // Minta izin notifikasi
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission();
             }
 
-            // Event listeners
             document.getElementById('logoutBtn').addEventListener('click', async () => {
                 if (presenceChannel) presenceChannel.unsubscribe();
+                if (globalMessagesSubscription) globalMessagesSubscription.unsubscribe();
                 await window.supabase.auth.signOut();
                 window.location.href = '/';
             });
@@ -200,6 +200,56 @@
             document.getElementById('deleteChatBtn').addEventListener('click', deleteChat);
         });
 
+        // ========== GLOBAL MESSAGES LISTENER ==========
+        // Dengérin SEMUA pesan baru (bukan cuma yang lagi dibuka)
+        function setupGlobalMessagesListener() {
+            globalMessagesSubscription = window.supabase
+                .channel('global-messages')
+                .on('postgres_changes', {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'messages',
+                    filter: `receiver_id=eq.${currentUser.id}`
+                }, (payload) => {
+                    const msg = payload.new;
+                    
+                    // Kalo pesan dari user yang lagi dibuka, langsung append + mark as read
+                    if (currentChatUser && msg.sender_id === currentChatUser.id) {
+                        appendMessage(msg);
+                        markAsRead().then(() => {
+                            // Refresh chat list biar badge ilang
+                            loadChatList();
+                        });
+                    } else {
+                        // Kalo bukan dari chat yang lagi dibuka, refresh chat list (badge muncul)
+                        debouncedLoadChatList();
+                        
+                        // Kirim notifikasi
+                        loadSenderNameAndNotify(msg.sender_id, msg.content);
+                    }
+                })
+                .subscribe();
+        }
+
+        function debouncedLoadChatList() {
+            clearTimeout(chatListRefreshTimeout);
+            chatListRefreshTimeout = setTimeout(() => {
+                loadChatList();
+            }, 500);
+        }
+
+        async function loadSenderNameAndNotify(senderId, content) {
+            const { data } = await window.supabase
+                .from('profiles')
+                .select('username')
+                .eq('id', senderId)
+                .single();
+            
+            if (data) {
+                sendNotification(data.username, content);
+            }
+        }
+
         async function loadMyProfile() {
             const { data } = await window.supabase.from('profiles')
                 .select('*')
@@ -218,7 +268,6 @@
             }
         }
 
-        // ========== PRESENCE (ONLINE STATUS) ==========
         function setupPresence() {
             presenceChannel = window.supabase.channel('online-users', {
                 config: { presence: { key: currentUser.id } }
@@ -243,7 +292,6 @@
             const state = presenceChannel.presenceState();
             const onlineUsers = Object.keys(state);
 
-            // Update sidebar
             document.querySelectorAll('.user-item').forEach(item => {
                 const userId = item.dataset.id;
                 const dot = item.querySelector('.online-dot');
@@ -256,7 +304,6 @@
                 }
             });
 
-            // Update chat header
             if (currentChatUser) {
                 const dot = document.getElementById('chatOnlineDot');
                 if (onlineUsers.includes(currentChatUser.id)) {
@@ -269,10 +316,8 @@
             }
         }
 
-        // ========== LOAD CHAT LIST ==========
         async function loadChatList() {
             const list = document.getElementById('userList');
-            list.innerHTML = '<div class="loading-small">Loading chats...</div>';
 
             const { data: messages } = await window.supabase
                 .from('messages')
@@ -301,7 +346,6 @@
                 return;
             }
 
-            // Hitung unread
             const presenceState = presenceChannel ? presenceChannel.presenceState() : {};
             const onlineUsers = Object.keys(presenceState);
 
@@ -404,9 +448,9 @@
 
             await loadMessages();
             await markAsRead();
+            await loadChatList(); // Refresh chat list biar badge ilang
             updateAllOnlineStatus();
 
-            // Subscribe ke pesan baru
             if (messagesSubscription) messagesSubscription.unsubscribe();
             messagesSubscription = window.supabase
                 .channel('messages-channel-' + userId)
@@ -418,16 +462,16 @@
                     const msg = payload.new;
                     if ((msg.sender_id === currentUser.id && msg.receiver_id === currentChatUser.id) ||
                         (msg.sender_id === currentChatUser.id && msg.receiver_id === currentUser.id)) {
+                        // Cek apakah udah di-append sama global listener
+                        const existingMessages = document.querySelectorAll('.message');
+                        const lastMsg = existingMessages[existingMessages.length - 1];
+                        if (lastMsg && lastMsg.textContent === msg.content) return;
+
                         appendMessage(msg);
-                        if (msg.sender_id === currentChatUser.id) {
-                            markAsRead();
-                            sendNotification(currentChatUser.username, msg.content);
-                        }
                     }
                 })
                 .subscribe();
 
-            // Subscribe ke typing indicator
             if (typingChannel) typingChannel.unsubscribe();
             typingChannel = window.supabase.channel('typing-' + [currentUser.id, userId].sort().join('-'));
             typingChannel
@@ -438,7 +482,6 @@
                 })
                 .subscribe();
 
-            // Start online check interval
             if (onlineCheckInterval) clearInterval(onlineCheckInterval);
             onlineCheckInterval = setInterval(updateAllOnlineStatus, 10000);
         }
@@ -487,8 +530,14 @@
         function appendMessage(msg) {
             const box = document.getElementById('messages');
             const isMine = msg.sender_id === currentUser.id;
+            
+            // Cek duplikat
+            const existing = Array.from(box.querySelectorAll('.message'));
+            if (existing.some(el => el.dataset.msgId === msg.id)) return;
+
             const div = document.createElement('div');
             div.className = 'message ' + (isMine ? 'mine' : 'theirs');
+            div.dataset.msgId = msg.id;
             div.textContent = msg.content;
             box.appendChild(div);
             box.scrollTop = box.scrollHeight;
