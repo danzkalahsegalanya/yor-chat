@@ -8,33 +8,56 @@
 </head>
 <body class="chat-page">
     <div class="chat-container">
+        <!-- SIDEBAR -->
         <div class="sidebar">
             <div class="sidebar-header">
-                <div class="user-info">
-                    <div class="user-avatar">🌸</div>
+                <div class="user-info" id="userProfileBtn" style="cursor:pointer;">
+                    <div class="user-avatar" id="myAvatar">🌸</div>
                     <div>
                         <div class="user-name" id="myUsername">Loading...</div>
-                        <div class="user-status">Online</div>
+                        <div class="user-phone" id="myPhone">-</div>
                     </div>
                 </div>
                 <button id="logoutBtn" class="logout-btn">Logout</button>
             </div>
+
+            <!-- NOMOR SAYA -->
+            <div class="my-number-box">
+                <div class="my-number-label">📱 Nomor Saya</div>
+                <div class="my-number" id="myNumber">-</div>
+                <button class="copy-number-btn" id="copyNumberBtn">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                    Copy
+                </button>
+            </div>
+
+            <!-- TOMBOL NEW CHAT -->
+            <button class="new-chat-btn" id="newChatBtn">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                Chat Baru
+            </button>
+
+            <!-- LIST CHAT -->
             <div class="user-list" id="userList">
-                <div class="loading-small">Loading users...</div>
+                <div class="loading-small">Loading chats...</div>
             </div>
         </div>
 
+        <!-- CHAT AREA -->
         <div class="chat-area">
             <div id="emptyChat" class="empty-chat">
                 <div class="empty-icon">💬</div>
-                <p>Pilih user buat mulai chat</p>
+                <p>Pilih chat atau mulai chat baru</p>
+                <p class="empty-hint">Cuma yang tau nomor lo yang bisa chat</p>
             </div>
 
             <div id="chatRoom" style="display:none;">
                 <div class="chat-header">
+                    <button class="back-btn" id="backBtn">←</button>
+                    <div class="chat-avatar" id="chatAvatar">🌸</div>
                     <div>
                         <div class="chat-username" id="chatUsername">-</div>
-                        <div class="chat-status">Online</div>
+                        <div class="chat-phone-small" id="chatPhone">-</div>
                     </div>
                 </div>
 
@@ -48,9 +71,24 @@
         </div>
     </div>
 
+    <!-- MODAL NEW CHAT -->
+    <div class="modal" id="newChatModal">
+        <div class="modal-box">
+            <h3>Chat Baru</h3>
+            <p class="modal-desc">Masukin nomor tujuan (12 digit, contoh: 081234567890)</p>
+            <input type="text" id="searchNumber" placeholder="08xxxxxxxxxx" maxlength="12">
+            <div id="searchError" class="error"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" id="cancelNewChat">Batal</button>
+                <button class="btn btn-primary" id="startChat">Mulai Chat</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/supabase.js"></script>
     <script>
         let currentUser = null;
+        let currentProfile = null;
         let currentChatUser = null;
         let messagesSubscription = null;
 
@@ -62,64 +100,193 @@
             }
 
             currentUser = session.user;
-            await loadProfile();
-            await loadUsers();
+            await loadMyProfile();
+            await loadChatList();
 
+            // Event listeners
             document.getElementById('logoutBtn').addEventListener('click', async () => {
                 await window.supabase.auth.signOut();
                 window.location.href = '/';
+            });
+
+            document.getElementById('userProfileBtn').addEventListener('click', () => {
+                window.location.href = '/profile.html';
+            });
+
+            document.getElementById('copyNumberBtn').addEventListener('click', () => {
+                if (currentProfile && currentProfile.phone_number) {
+                    navigator.clipboard.writeText(currentProfile.phone_number);
+                    showNotification('Nomor berhasil di-copy!');
+                }
+            });
+
+            document.getElementById('newChatBtn').addEventListener('click', () => {
+                document.getElementById('newChatModal').style.display = 'flex';
+                document.getElementById('searchNumber').focus();
+            });
+
+            document.getElementById('cancelNewChat').addEventListener('click', () => {
+                document.getElementById('newChatModal').style.display = 'none';
+                document.getElementById('searchNumber').value = '';
+                document.getElementById('searchError').classList.remove('show');
+            });
+
+            document.getElementById('startChat').addEventListener('click', startNewChat);
+            document.getElementById('searchNumber').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') startNewChat();
             });
 
             document.getElementById('sendBtn').addEventListener('click', sendMessage);
             document.getElementById('messageInput').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') sendMessage();
             });
+
+            document.getElementById('backBtn').addEventListener('click', () => {
+                document.getElementById('chatRoom').style.display = 'none';
+                document.getElementById('emptyChat').style.display = 'flex';
+                currentChatUser = null;
+                if (messagesSubscription) messagesSubscription.unsubscribe();
+                loadChatList();
+            });
         });
 
-        async function loadProfile() {
+        async function loadMyProfile() {
             const { data } = await window.supabase.from('profiles')
-                .select('*').eq('id', currentUser.id).single();
+                .select('*')
+                .eq('id', currentUser.id)
+                .single();
+
             if (data) {
+                currentProfile = data;
                 document.getElementById('myUsername').textContent = data.username;
+                document.getElementById('myPhone').textContent = '@' + data.username;
+                document.getElementById('myNumber').textContent = data.phone_number || 'Belum ada';
+
+                if (data.avatar_url) {
+                    document.getElementById('myAvatar').innerHTML = '<img src="' + data.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+                }
             }
         }
 
-        async function loadUsers() {
-            const { data } = await window.supabase.from('profiles')
-                .select('*').neq('id', currentUser.id);
-
+        async function loadChatList() {
             const list = document.getElementById('userList');
-            if (!data || data.length === 0) {
-                list.innerHTML = '<div class="loading-small">Belum ada user lain</div>';
+            list.innerHTML = '<div class="loading-small">Loading chats...</div>';
+
+            const { data: messages } = await window.supabase
+                .from('messages')
+                .select('*')
+                .or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`)
+                .order('created_at', { ascending: false });
+
+            if (!messages || messages.length === 0) {
+                list.innerHTML = '<div class="loading-small">Belum ada chat. Klik "Chat Baru" buat mulai!</div>';
                 return;
             }
 
-            list.innerHTML = data.map(u => `
-                <div class="user-item" data-id="${u.id}" data-username="${u.username}">
-                    <div class="user-item-avatar">🌸</div>
-                    <div>
-                        <div class="user-item-name">${u.username}</div>
-                        <div class="user-item-status">Klik buat chat</div>
-                    </div>
-                </div>
-            `).join('');
+            // Dapetin unique user IDs
+            const userIds = new Set();
+            messages.forEach(m => {
+                if (m.sender_id !== currentUser.id) userIds.add(m.sender_id);
+                if (m.receiver_id !== currentUser.id) userIds.add(m.receiver_id);
+            });
+
+            const { data: profiles } = await window.supabase
+                .from('profiles')
+                .select('*')
+                .in('id', Array.from(userIds));
+
+            if (!profiles || profiles.length === 0) {
+                list.innerHTML = '<div class="loading-small">Belum ada chat</div>';
+                return;
+            }
+
+            list.innerHTML = profiles.map(u => {
+                const lastMsg = messages.find(m =>
+                    (m.sender_id === u.id || m.receiver_id === u.id)
+                );
+                const avatarHtml = u.avatar_url
+                    ? '<img src="' + u.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
+                    : '🌸';
+
+                return '<div class="user-item" data-id="' + u.id + '" data-username="' + u.username + '" data-phone="' + (u.phone_number || '') + '" data-avatar="' + (u.avatar_url || '') + '">' +
+                    '<div class="user-item-avatar">' + avatarHtml + '</div>' +
+                    '<div style="flex:1;overflow:hidden;">' +
+                        '<div class="user-item-name">' + u.username + '</div>' +
+                        '<div class="user-item-status">' + (lastMsg ? truncate(lastMsg.content, 25) : 'Mulai chat') + '</div>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
 
             list.querySelectorAll('.user-item').forEach(item => {
-                item.addEventListener('click', () => openChat(item.dataset.id, item.dataset.username));
+                item.addEventListener('click', () => {
+                    openChat(
+                        item.dataset.id,
+                        item.dataset.username,
+                        item.dataset.phone,
+                        item.dataset.avatar
+                    );
+                });
             });
         }
 
-        async function openChat(userId, username) {
-            currentChatUser = { id: userId, username: username };
+        function truncate(str, n) {
+            return str.length > n ? str.substr(0, n - 1) + '...' : str;
+        }
+
+        async function startNewChat() {
+            const phone = document.getElementById('searchNumber').value.trim();
+            const error = document.getElementById('searchError');
+
+            if (!phone || phone.length !== 12 || !phone.startsWith('08')) {
+                error.textContent = 'Nomor harus 12 digit dan mulai dengan 08';
+                error.classList.add('show');
+                return;
+            }
+
+            if (phone === currentProfile.phone_number) {
+                error.textContent = 'Itu nomor lo sendiri';
+                error.classList.add('show');
+                return;
+            }
+
+            const { data, error: err } = await window.supabase
+                .from('profiles')
+                .select('*')
+                .eq('phone_number', phone)
+                .single();
+
+            if (err || !data) {
+                error.textContent = 'Nomor gak ditemukan';
+                error.classList.add('show');
+                return;
+            }
+
+            document.getElementById('newChatModal').style.display = 'none';
+            document.getElementById('searchNumber').value = '';
+            error.classList.remove('show');
+
+            openChat(data.id, data.username, data.phone_number, data.avatar_url);
+        }
+
+        async function openChat(userId, username, phone, avatar) {
+            currentChatUser = { id: userId, username: username, phone: phone, avatar: avatar };
+
             document.getElementById('emptyChat').style.display = 'none';
             document.getElementById('chatRoom').style.display = 'flex';
             document.getElementById('chatUsername').textContent = username;
+            document.getElementById('chatPhone').textContent = phone || '';
+
+            if (avatar) {
+                document.getElementById('chatAvatar').innerHTML = '<img src="' + avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
+            } else {
+                document.getElementById('chatAvatar').innerHTML = '🌸';
+            }
 
             await loadMessages();
 
             if (messagesSubscription) messagesSubscription.unsubscribe();
             messagesSubscription = window.supabase
-                .channel('messages-channel')
+                .channel('messages-channel-' + userId)
                 .on('postgres_changes', {
                     event: 'INSERT',
                     schema: 'public',
@@ -135,7 +302,8 @@
         }
 
         async function loadMessages() {
-            const { data } = await window.supabase.from('messages')
+            const { data } = await window.supabase
+                .from('messages')
                 .select('*')
                 .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`)
                 .order('created_at', { ascending: true });
@@ -166,6 +334,18 @@
                 receiver_id: currentChatUser.id,
                 content: content
             });
+        }
+
+        function showNotification(message) {
+            const notif = document.createElement('div');
+            notif.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#ff6b9d,#c44569);color:white;padding:14px 20px;border-radius:12px;font-weight:600;z-index:99999;box-shadow:0 10px 30px rgba(196,69,105,0.5);';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                notif.style.transition = 'opacity 0.3s';
+                setTimeout(() => notif.remove(), 300);
+            }, 2000);
         }
     </script>
 </body>
