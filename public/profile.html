@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - Yor Chat</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="profile-page">
+    <div class="container">
+        <button class="back-btn-profile" id="backBtn">←</button>
+
+        <div class="logo-wrap">
+            <div class="logo-icon" id="avatarPreview">
+                <img src="" alt="Avatar" id="avatarImg" style="display:none;">
+                <span id="avatarPlaceholder">🌸</span>
+            </div>
+        </div>
+
+        <h1>PROFILE</h1>
+        <p class="subtitle">Edit data profile lo</p>
+
+        <!-- NOMOR SAYA -->
+        <div class="info-box">
+            <div class="info-label">📱 Nomor Saya</div>
+            <div class="info-value" id="displayPhone">-</div>
+            <button class="copy-btn-small" id="copyPhoneBtn">Copy</button>
+        </div>
+
+        <!-- FORM EDIT -->
+        <form id="profileForm">
+            <label class="form-label">Username</label>
+            <input type="text" id="username" placeholder="Username" required>
+
+            <label class="form-label">Nama Lengkap</label>
+            <input type="text" id="fullName" placeholder="Nama lengkap lo">
+
+            <label class="form-label">Bio</label>
+            <textarea id="bio" rows="3" placeholder="Ceritain tentang diri lo..."></textarea>
+
+            <label class="form-label">Foto Profile</label>
+            <div class="file-upload-wrap">
+                <input type="file" id="avatarFile" accept="image/*" style="display:none;">
+                <button type="button" class="btn btn-secondary" id="chooseFileBtn">
+                    📷 Pilih Foto
+                </button>
+                <span class="file-name" id="fileName">Belum ada file dipilih</span>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="margin-top: 20px;">
+                💾 Simpan Perubahan
+            </button>
+        </form>
+
+        <div id="error" class="error"></div>
+        <div id="success" class="success"></div>
+
+        <div class="back-home">
+            <a href="/chat.html">← Balik ke Chat</a>
+        </div>
+    </div>
+
+    <script src="/supabase.js"></script>
+    <script>
+        let currentUser = null;
+        let currentProfile = null;
+        let selectedFile = null;
+
+        window.addEventListener('supabase-ready', async () => {
+            const { data: { session } } = await window.supabase.auth.getSession();
+            if (!session) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            currentUser = session.user;
+            await loadProfile();
+
+            document.getElementById('backBtn').addEventListener('click', () => {
+                window.location.href = '/chat.html';
+            });
+
+            document.getElementById('copyPhoneBtn').addEventListener('click', () => {
+                if (currentProfile && currentProfile.phone_number) {
+                    navigator.clipboard.writeText(currentProfile.phone_number);
+                    showNotification('Nomor berhasil di-copy!');
+                }
+            });
+
+            document.getElementById('chooseFileBtn').addEventListener('click', () => {
+                document.getElementById('avatarFile').click();
+            });
+
+            document.getElementById('avatarFile').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    if (file.size > 2 * 1024 * 1024) {
+                        showError('File terlalu gede. Max 2MB.');
+                        return;
+                    }
+                    selectedFile = file;
+                    document.getElementById('fileName').textContent = file.name;
+                    
+                    // Preview
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        document.getElementById('avatarImg').src = ev.target.result;
+                        document.getElementById('avatarImg').style.display = 'block';
+                        document.getElementById('avatarPlaceholder').style.display = 'none';
+                    };
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            document.getElementById('profileForm').addEventListener('submit', saveProfile);
+        });
+
+        async function loadProfile() {
+            const { data, error } = await window.supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', currentUser.id)
+                .single();
+
+            if (error) {
+                showError('Gagal load profile: ' + error.message);
+                return;
+            }
+
+            currentProfile = data;
+            document.getElementById('username').value = data.username || '';
+            document.getElementById('fullName').value = data.full_name || '';
+            document.getElementById('bio').value = data.bio || '';
+            document.getElementById('displayPhone').textContent = data.phone_number || '-';
+
+            if (data.avatar_url) {
+                document.getElementById('avatarImg').src = data.avatar_url;
+                document.getElementById('avatarImg').style.display = 'block';
+                document.getElementById('avatarPlaceholder').style.display = 'none';
+            }
+        }
+
+        async function saveProfile(e) {
+            e.preventDefault();
+            const error = document.getElementById('error');
+            const success = document.getElementById('success');
+            error.classList.remove('show');
+            success.classList.remove('show');
+
+            const username = document.getElementById('username').value.trim().toLowerCase();
+            const fullName = document.getElementById('fullName').value.trim();
+            const bio = document.getElementById('bio').value.trim();
+
+            // Validasi username
+            if (!/^[a-z0-9_]+$/.test(username)) {
+                showError('Username cuma boleh huruf kecil, angka, dan underscore (_)');
+                return;
+            }
+
+            let avatarUrl = currentProfile.avatar_url;
+
+            // Upload avatar kalo ada file baru
+            if (selectedFile) {
+                const fileExt = selectedFile.name.split('.').pop();
+                const fileName = currentUser.id + '/' + Date.now() + '.' + fileExt;
+
+                const { error: uploadErr } = await window.supabase.storage
+                    .from('avatars')
+                    .upload(fileName, selectedFile, {
+                        cacheControl: '3600',
+                        upsert: true
+                    });
+
+                if (uploadErr) {
+                    showError('Gagal upload foto: ' + uploadErr.message);
+                    return;
+                }
+
+                const { data: urlData } = window.supabase.storage
+                    .from('avatars')
+                    .getPublicUrl(fileName);
+
+                avatarUrl = urlData.publicUrl;
+            }
+
+            // Update profile
+            const { error: updateErr } = await window.supabase
+                .from('profiles')
+                .update({
+                    username: username,
+                    full_name: fullName,
+                    bio: bio,
+                    avatar_url: avatarUrl
+                })
+                .eq('id', currentUser.id);
+
+            if (updateErr) {
+                showError('Gagal simpan: ' + updateErr.message);
+                return;
+            }
+
+            success.textContent = '✅ Profile berhasil diupdate!';
+            success.classList.add('show');
+            selectedFile = null;
+            document.getElementById('fileName').textContent = 'Belum ada file dipilih';
+
+            setTimeout(() => {
+                window.location.href = '/chat.html';
+            }, 1500);
+        }
+
+        function showError(msg) {
+            const error = document.getElementById('error');
+            error.textContent = msg;
+            error.classList.add('show');
+        }
+
+        function showNotification(message) {
+            const notif = document.createElement('div');
+            notif.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#ff6b9d,#c44569);color:white;padding:14px 20px;border-radius:12px;font-weight:600;z-index:99999;box-shadow:0 10px 30px rgba(196,69,105,0.5);';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                notif.style.transition = 'opacity 0.3s';
+                setTimeout(() => notif.remove(), 300);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
