@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Yor Chat</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="logo-wrap">
+            <div class="logo-icon">
+                <img src="/yor.png" alt="Yor" onerror="this.style.display='none'; this.parentElement.innerHTML='🌸';">
+            </div>
+        </div>
+        <h1>REGISTER</h1>
+        <p class="subtitle">Bikin akun baru</p>
+
+        <form id="registerForm">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="text" id="fullName" placeholder="Nama Lengkap">
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Password (min 6 karakter)" required>
+            <button type="submit" class="btn btn-primary">Register</button>
+        </form>
+
+        <div id="error" class="error"></div>
+        <div id="success" class="success"></div>
+
+        <p class="footer-link">
+            Udah punya akun? <a href="/login.html">Login</a>
+        </p>
+    </div>
+
+    <script src="/supabase.js"></script>
+    <script>
+        window.addEventListener('supabase-ready', () => {
+            const form = document.getElementById('registerForm');
+            const error = document.getElementById('error');
+            const success = document.getElementById('success');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('username').value;
+                const fullName = document.getElementById('fullName').value;
+                const email = document.getElementById('email').value;
+                const password = document.getElementById('password').value;
+
+                const { data, error: err } = await window.supabase.auth.signUp({
+                    email, password
+                });
+
+                if (err) {
+                    error.textContent = err.message;
+                    error.classList.add('show');
+                    return;
+                }
+
+                if (data.user) {
+                    const { error: profileErr } = await window.supabase.from('profiles').insert({
+                        id: data.user.id,
+                        username: username,
+                        full_name: fullName || username
+                    });
+
+                    if (profileErr) {
+                        error.textContent = 'Gagal simpen profile: ' + profileErr.message;
+                        error.classList.add('show');
+                        return;
+                    }
+                }
+
+                success.textContent = 'Berhasil daftar! Silakan login.';
+                success.classList.add('show');
+
+                setTimeout(() => {
+                    window.location.href = '/login.html';
+                }, 2000);
+            });
+        });
+    </script>
+</body>
+</html>

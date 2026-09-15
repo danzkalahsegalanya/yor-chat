@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat - Yor Chat</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="chat-page">
+    <div class="chat-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="user-info">
+                    <div class="user-avatar">🌸</div>
+                    <div>
+                        <div class="user-name" id="myUsername">Loading...</div>
+                        <div class="user-status">Online</div>
+                    </div>
+                </div>
+                <button id="logoutBtn" class="logout-btn">Logout</button>
+            </div>
+            <div class="user-list" id="userList">
+                <div class="loading-small">Loading users...</div>
+            </div>
+        </div>
+
+        <div class="chat-area">
+            <div id="emptyChat" class="empty-chat">
+                <div class="empty-icon">💬</div>
+                <p>Pilih user buat mulai chat</p>
+            </div>
+
+            <div id="chatRoom" style="display:none;">
+                <div class="chat-header">
+                    <div>
+                        <div class="chat-username" id="chatUsername">-</div>
+                        <div class="chat-status">Online</div>
+                    </div>
+                </div>
+
+                <div class="messages" id="messages"></div>
+
+                <div class="chat-input-area">
+                    <input type="text" id="messageInput" placeholder="Ketik pesan...">
+                    <button id="sendBtn">Kirim</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/supabase.js"></script>
+    <script>
+        let currentUser = null;
+        let currentChatUser = null;
+        let messagesSubscription = null;
+
+        window.addEventListener('supabase-ready', async () => {
+            const { data: { session } } = await window.supabase.auth.getSession();
+            if (!session) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            currentUser = session.user;
+            await loadProfile();
+            await loadUsers();
+
+            document.getElementById('logoutBtn').addEventListener('click', async () => {
+                await window.supabase.auth.signOut();
+                window.location.href = '/';
+            });
+
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
+            document.getElementById('messageInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendMessage();
+            });
+        });
+
+        async function loadProfile() {
+            const { data } = await window.supabase.from('profiles')
+                .select('*').eq('id', currentUser.id).single();
+            if (data) {
+                document.getElementById('myUsername').textContent = data.username;
+            }
+        }
+
+        async function loadUsers() {
+            const { data } = await window.supabase.from('profiles')
+                .select('*').neq('id', currentUser.id);
+
+            const list = document.getElementById('userList');
+            if (!data || data.length === 0) {
+                list.innerHTML = '<div class="loading-small">Belum ada user lain</div>';
+                return;
+            }
+
+            list.innerHTML = data.map(u => `
+                <div class="user-item" data-id="${u.id}" data-username="${u.username}">
+                    <div class="user-item-avatar">🌸</div>
+                    <div>
+                        <div class="user-item-name">${u.username}</div>
+                        <div class="user-item-status">Klik buat chat</div>
+                    </div>
+                </div>
+            `).join('');
+
+            list.querySelectorAll('.user-item').forEach(item => {
+                item.addEventListener('click', () => openChat(item.dataset.id, item.dataset.username));
+            });
+        }
+
+        async function openChat(userId, username) {
+            currentChatUser = { id: userId, username: username };
+            document.getElementById('emptyChat').style.display = 'none';
+            document.getElementById('chatRoom').style.display = 'flex';
+            document.getElementById('chatUsername').textContent = username;
+
+            await loadMessages();
+
+            if (messagesSubscription) messagesSubscription.unsubscribe();
+            messagesSubscription = window.supabase
+                .channel('messages-channel')
+                .on('postgres_changes', {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'messages'
+                }, (payload) => {
+                    const msg = payload.new;
+                    if ((msg.sender_id === currentUser.id && msg.receiver_id === currentChatUser.id) ||
+                        (msg.sender_id === currentChatUser.id && msg.receiver_id === currentUser.id)) {
+                        appendMessage(msg);
+                    }
+                })
+                .subscribe();
+        }
+
+        async function loadMessages() {
+            const { data } = await window.supabase.from('messages')
+                .select('*')
+                .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`)
+                .order('created_at', { ascending: true });
+
+            const box = document.getElementById('messages');
+            box.innerHTML = '';
+            if (data) data.forEach(appendMessage);
+        }
+
+        function appendMessage(msg) {
+            const box = document.getElementById('messages');
+            const isMine = msg.sender_id === currentUser.id;
+            const div = document.createElement('div');
+            div.className = 'message ' + (isMine ? 'mine' : 'theirs');
+            div.textContent = msg.content;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const content = input.value.trim();
+            if (!content || !currentChatUser) return;
+
+            input.value = '';
+            await window.supabase.from('messages').insert({
+                sender_id: currentUser.id,
+                receiver_id: currentChatUser.id,
+                content: content
+            });
+        }
+    </script>
+</body>
+</html>
