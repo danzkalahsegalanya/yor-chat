@@ -37,10 +37,12 @@
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                error.classList.remove('show');
+
                 const email = document.getElementById('email').value;
                 const password = document.getElementById('password').value;
 
-                const { data, error: err } = await window.supabase.auth.signInWithPassword({
+                const { data, error: err } = await window.supabaseClient.auth.signInWithPassword({
                     email, password
                 });
 
