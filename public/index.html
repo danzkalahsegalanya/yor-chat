@@ -33,7 +33,7 @@
             document.getElementById('loading').style.display = 'none';
             document.getElementById('buttons').style.display = 'block';
 
-            const { data: { session } } = await window.supabase.auth.getSession();
+            const { data: { session } } = await window.supabaseClient.auth.getSession();
             if (session) {
                 window.location.href = '/chat.html';
             }
