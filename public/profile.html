@@ -145,4 +145,23 @@
             setTimeout(() => { window.location.href = '/chat.html'; }, 1500);
         }
 
-        function
+        function showError(msg) {
+            const error = document.getElementById('error');
+            error.textContent = msg;
+            error.classList.add('show');
+        }
+
+        function showNotification(message) {
+            const notif = document.createElement('div');
+            notif.style.cssText = 'position:fixed;top:20px;right:20px;background:linear-gradient(135deg,#ff6b9d,#c44569);color:white;padding:14px 20px;border-radius:12px;font-weight:600;z-index:99999;box-shadow:0 10px 30px rgba(196,69,105,0.5);';
+            notif.textContent = message;
+            document.body.appendChild(notif);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                notif.style.transition = 'opacity 0.3s';
+                setTimeout(() => notif.remove(), 300);
+            }, 2000);
+        }
+    </script>
+</body>
+</html>
