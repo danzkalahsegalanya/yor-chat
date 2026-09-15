@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
-    <meta http-equiv="Pragma" content="no-cache">
-    <meta http-equiv="Expires" content="0">
     <title>Chat - Yor Chat</title>
     <link rel="stylesheet" href="/style.css">
 </head>
@@ -28,16 +26,10 @@
                     <div class="my-number-label">📱 Nomor Saya</div>
                     <div class="my-number" id="myNumber">-</div>
                 </div>
-                <button class="copy-number-btn" id="copyNumberBtn">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-                    Copy
-                </button>
+                <button class="copy-number-btn" id="copyNumberBtn">Copy</button>
             </div>
 
-            <button class="new-chat-btn" id="newChatBtn">
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-                Chat Baru
-            </button>
+            <button class="new-chat-btn" id="newChatBtn">+ Chat Baru</button>
 
             <div class="user-list" id="userList">
                 <div class="loading-small">Loading chats...</div>
@@ -62,7 +54,6 @@
                         <div class="chat-username" id="chatUsername">-</div>
                         <div class="chat-phone-small" id="chatStatus">-</div>
                     </div>
-                    <button class="menu-small-btn" id="chatMenuBtn">⋮</button>
                 </div>
 
                 <div class="messages" id="messages"></div>
@@ -92,24 +83,9 @@
         </div>
     </div>
 
-    <div class="modal" id="chatMenuModal">
-        <div class="modal-box">
-            <h3>Menu Chat</h3>
-            <button class="modal-menu-btn" id="deleteChatBtn">🗑️ Hapus Chat</button>
-            <button class="modal-menu-btn cancel" id="cancelMenuBtn">❌ Batal</button>
-        </div>
-    </div>
-
-    <!-- Load Supabase dari CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="/supabase.js"></script>
     <script>
-        // Config langsung, gak pake supabase.js
-        const SUPABASE_URL = 'https://zezkqbfqqfhjuswfcjrc.supabase.co';
-        const SUPABASE_ANON_KEY = 'sb_publishable_C4zPmqecx7MmjIBYg_NtfQ_AlP_HmK_';
-
-        // Pake nama variable beda biar gak bentrok sama CDN
-        const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+        let supabase = null;
         let currentUser = null;
         let currentProfile = null;
         let currentChatUser = null;
@@ -122,37 +98,20 @@
         let typingTimeout = null;
         let isTyping = false;
 
-        (async () => {
-            console.log('1. Init');
+        window.addEventListener('supabase-ready', async () => {
+            supabase = window.supabaseClient;
 
-            const { data: { session } } = await sb.auth.getSession();
-            console.log('2. Session:', session ? 'ada' : 'kosong');
-
+            const { data: { session } } = await supabase.auth.getSession();
             if (!session) {
                 window.location.href = '/login.html';
                 return;
             }
 
             currentUser = session.user;
-            console.log('3. User ID:', currentUser.id);
-
-            try {
-                await loadMyProfile();
-                console.log('4. Profile loaded');
-
-                await loadChatList();
-                console.log('5. Chat list loaded');
-
-                setupPresence();
-                console.log('6. Presence setup');
-
-                setupGlobalMessagesListener();
-                console.log('7. Global listener setup');
-            } catch (err) {
-                console.error('ERROR:', err);
-                document.getElementById('myUsername').textContent = 'Error: ' + err.message;
-                return;
-            }
+            await loadMyProfile();
+            await loadChatList();
+            setupPresence();
+            setupGlobalMessagesListener();
 
             if ('Notification' in window && Notification.permission === 'default') {
                 Notification.requestPermission();
@@ -161,7 +120,7 @@
             document.getElementById('logoutBtn').addEventListener('click', async () => {
                 if (presenceChannel) presenceChannel.unsubscribe();
                 if (globalMessagesSubscription) globalMessagesSubscription.unsubscribe();
-                await sb.auth.signOut();
+                await supabase.auth.signOut();
                 window.location.href = '/';
             });
 
@@ -212,20 +171,10 @@
             });
 
             document.getElementById('backBtn').addEventListener('click', closeChat);
-
-            document.getElementById('chatMenuBtn').addEventListener('click', () => {
-                document.getElementById('chatMenuModal').style.display = 'flex';
-            });
-
-            document.getElementById('cancelMenuBtn').addEventListener('click', () => {
-                document.getElementById('chatMenuModal').style.display = 'none';
-            });
-
-            document.getElementById('deleteChatBtn').addEventListener('click', deleteChat);
-        })();
+        });
 
         function setupGlobalMessagesListener() {
-            globalMessagesSubscription = sb
+            globalMessagesSubscription = supabase
                 .channel('global-messages')
                 .on('postgres_changes', {
                     event: 'INSERT',
@@ -251,26 +200,17 @@
         }
 
         async function loadSenderNameAndNotify(senderId, content) {
-            const { data } = await sb.from('profiles')
-                .select('username').eq('id', senderId).single();
+            const { data } = await supabase.from('profiles').select('username').eq('id', senderId).single();
             if (data) sendNotification(data.username, content);
         }
 
         async function loadMyProfile() {
-            const { data, error } = await sb.from('profiles')
-                .select('*').eq('id', currentUser.id).single();
-
-            if (error) {
-                console.error('Profile error:', error);
-                throw error;
-            }
-
+            const { data } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
             if (data) {
                 currentProfile = data;
                 document.getElementById('myUsername').textContent = data.username;
                 document.getElementById('myPhone').textContent = '@' + data.username;
                 document.getElementById('myNumber').textContent = data.phone_number || 'Belum ada';
-
                 if (data.avatar_url) {
                     document.getElementById('myAvatar').innerHTML = '<img src="' + data.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
                 }
@@ -278,18 +218,14 @@
         }
 
         function setupPresence() {
-            presenceChannel = sb.channel('online-users', {
+            presenceChannel = supabase.channel('online-users', {
                 config: { presence: { key: currentUser.id } }
             });
-
             presenceChannel
                 .on('presence', { event: 'sync' }, () => updateAllOnlineStatus())
                 .subscribe(async (status) => {
                     if (status === 'SUBSCRIBED') {
-                        await presenceChannel.track({
-                            user_id: currentUser.id,
-                            online_at: new Date().toISOString()
-                        });
+                        await presenceChannel.track({ user_id: currentUser.id, online_at: new Date().toISOString() });
                     }
                 });
         }
@@ -298,7 +234,6 @@
             if (!presenceChannel) return;
             const state = presenceChannel.presenceState();
             const onlineUsers = Object.keys(state);
-
             document.querySelectorAll('.user-item').forEach(item => {
                 const userId = item.dataset.id;
                 const dot = item.querySelector('.online-dot');
@@ -307,7 +242,6 @@
                     else dot.classList.remove('online');
                 }
             });
-
             if (currentChatUser) {
                 const dot = document.getElementById('chatOnlineDot');
                 if (onlineUsers.includes(currentChatUser.id)) {
@@ -322,21 +256,13 @@
 
         async function loadChatList() {
             const list = document.getElementById('userList');
-
-            const { data: messages, error } = await sb
-                .from('messages')
-                .select('*')
+            const { data: messages } = await supabase
+                .from('messages').select('*')
                 .or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`)
                 .order('created_at', { ascending: false });
 
-            if (error) {
-                console.error('Load messages error:', error);
-                list.innerHTML = '<div class="loading-small">Error: ' + error.message + '</div>';
-                return;
-            }
-
             if (!messages || messages.length === 0) {
-                list.innerHTML = '<div class="loading-small">Belum ada chat. Klik "Chat Baru" buat mulai!</div>';
+                list.innerHTML = '<div class="loading-small">Belum ada chat.</div>';
                 return;
             }
 
@@ -346,11 +272,7 @@
                 if (m.receiver_id !== currentUser.id) userIds.add(m.receiver_id);
             });
 
-            const { data: profiles } = await sb
-                .from('profiles')
-                .select('*')
-                .in('id', Array.from(userIds));
-
+            const { data: profiles } = await supabase.from('profiles').select('*').in('id', Array.from(userIds));
             if (!profiles || profiles.length === 0) {
                 list.innerHTML = '<div class="loading-small">Belum ada chat</div>';
                 return;
@@ -365,28 +287,19 @@
                     (m.receiver_id === u.id && m.sender_id === currentUser.id)
                 );
                 const lastMsg = userMessages[0];
-                const unreadCount = userMessages.filter(m =>
-                    m.sender_id === u.id && m.receiver_id === currentUser.id && !m.is_read
-                ).length;
-
+                const unreadCount = userMessages.filter(m => m.sender_id === u.id && m.receiver_id === currentUser.id && !m.is_read).length;
                 const avatarHtml = u.avatar_url
                     ? '<img src="' + u.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
                     : '🌸';
-
                 const isOnline = onlineUsers.includes(u.id);
                 const badgeHtml = unreadCount > 0 ? '<div class="unread-badge">' + unreadCount + '</div>' : '';
 
                 return '<div class="user-item" data-id="' + u.id + '" data-username="' + u.username + '" data-phone="' + (u.phone_number || '') + '" data-avatar="' + (u.avatar_url || '') + '">' +
-                    '<div class="user-item-avatar">' +
-                        avatarHtml +
-                        '<span class="online-dot ' + (isOnline ? 'online' : '') + '"></span>' +
-                    '</div>' +
+                    '<div class="user-item-avatar">' + avatarHtml + '<span class="online-dot ' + (isOnline ? 'online' : '') + '"></span></div>' +
                     '<div style="flex:1;overflow:hidden;">' +
                         '<div class="user-item-name">' + u.username + '</div>' +
                         '<div class="user-item-status">' + (lastMsg ? truncate(lastMsg.content, 25) : 'Mulai chat') + '</div>' +
-                    '</div>' +
-                    badgeHtml +
-                '</div>';
+                    '</div>' + badgeHtml + '</div>';
             }).join('');
 
             list.querySelectorAll('.user-item').forEach(item => {
@@ -396,56 +309,44 @@
             });
         }
 
-        function truncate(str, n) {
-            return str.length > n ? str.substr(0, n - 1) + '...' : str;
-        }
+        function truncate(str, n) { return str.length > n ? str.substr(0, n - 1) + '...' : str; }
 
         async function startNewChat() {
             const phone = document.getElementById('searchNumber').value.trim();
             const error = document.getElementById('searchError');
-
             if (!phone || phone.length !== 12 || !phone.startsWith('08')) {
                 error.textContent = 'Nomor harus 12 digit dan mulai dengan 08';
                 error.classList.add('show');
                 return;
             }
-
             if (phone === currentProfile.phone_number) {
                 error.textContent = 'Itu nomor lo sendiri';
                 error.classList.add('show');
                 return;
             }
-
-            const { data, error: err } = await sb
-                .from('profiles').select('*').eq('phone_number', phone).single();
-
+            const { data, error: err } = await supabase.from('profiles').select('*').eq('phone_number', phone).single();
             if (err || !data) {
                 error.textContent = 'Nomor gak ditemukan';
                 error.classList.add('show');
                 return;
             }
-
             document.getElementById('newChatModal').style.display = 'none';
             document.getElementById('searchNumber').value = '';
             error.classList.remove('show');
-
             openChat(data.id, data.username, data.phone_number, data.avatar_url);
         }
 
         async function openChat(userId, username, phone, avatar) {
             currentChatUser = { id: userId, username: username, phone: phone, avatar: avatar };
-
             document.getElementById('emptyChat').style.display = 'none';
             document.getElementById('chatRoom').style.display = 'flex';
             document.getElementById('chatUsername').textContent = username;
             document.getElementById('chatStatus').textContent = phone || '';
-
             if (avatar) {
                 document.getElementById('chatAvatar').innerHTML = '<img src="' + avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
             } else {
                 document.getElementById('chatAvatar').innerHTML = '🌸';
             }
-
             await loadMessages();
             await markAsRead();
             await new Promise(r => setTimeout(r, 300));
@@ -453,30 +354,22 @@
             updateAllOnlineStatus();
 
             if (messagesSubscription) messagesSubscription.unsubscribe();
-            messagesSubscription = sb
-                .channel('messages-channel-' + userId)
-                .on('postgres_changes', {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'messages'
-                }, (payload) => {
+            messagesSubscription = supabase.channel('messages-channel-' + userId)
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
                     const msg = payload.new;
                     if ((msg.sender_id === currentUser.id && msg.receiver_id === currentChatUser.id) ||
                         (msg.sender_id === currentChatUser.id && msg.receiver_id === currentUser.id)) {
                         appendMessage(msg);
                     }
-                })
-                .subscribe();
+                }).subscribe();
 
             if (typingChannel) typingChannel.unsubscribe();
-            typingChannel = sb.channel('typing-' + [currentUser.id, userId].sort().join('-'));
-            typingChannel
-                .on('broadcast', { event: 'typing' }, (payload) => {
-                    if (payload.payload.from === currentChatUser.id && payload.payload.to === currentUser.id) {
-                        showTypingIndicator();
-                    }
-                })
-                .subscribe();
+            typingChannel = supabase.channel('typing-' + [currentUser.id, userId].sort().join('-'));
+            typingChannel.on('broadcast', { event: 'typing' }, (payload) => {
+                if (payload.payload.from === currentChatUser.id && payload.payload.to === currentUser.id) {
+                    showTypingIndicator();
+                }
+            }).subscribe();
 
             if (onlineCheckInterval) clearInterval(onlineCheckInterval);
             onlineCheckInterval = setInterval(updateAllOnlineStatus, 10000);
@@ -500,12 +393,9 @@
         }
 
         async function loadMessages() {
-            const { data } = await sb
-                .from('messages')
-                .select('*')
+            const { data } = await supabase.from('messages').select('*')
                 .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`)
                 .order('created_at', { ascending: true });
-
             const box = document.getElementById('messages');
             box.innerHTML = '';
             if (data) data.forEach(appendMessage);
@@ -513,35 +403,22 @@
 
         async function markAsRead() {
             if (!currentChatUser) return;
-            
-            const { error } = await sb
-                .from('messages')
-                .update({ is_read: true })
-                .eq('sender_id', currentChatUser.id)
-                .eq('receiver_id', currentUser.id)
-                .eq('is_read', false);
-            
-            if (error) {
-                console.error('markAsRead error:', error);
-                return;
-            }
-
+            const { error } = await supabase.from('messages').update({ is_read: true })
+                .eq('sender_id', currentChatUser.id).eq('receiver_id', currentUser.id).eq('is_read', false);
+            if (error) { console.error('markAsRead error:', error); return; }
             const userItem = document.querySelector('.user-item[data-id="' + currentChatUser.id + '"]');
             if (userItem) {
                 const badge = userItem.querySelector('.unread-badge');
                 if (badge) badge.remove();
             }
-
             await loadChatList();
         }
 
         function appendMessage(msg) {
             const box = document.getElementById('messages');
             const isMine = msg.sender_id === currentUser.id;
-            
             const existing = Array.from(box.querySelectorAll('.message'));
             if (existing.some(el => el.dataset.msgId === msg.id)) return;
-
             const div = document.createElement('div');
             div.className = 'message ' + (isMine ? 'mine' : 'theirs');
             div.dataset.msgId = msg.id;
@@ -554,37 +431,16 @@
             const input = document.getElementById('messageInput');
             const content = input.value.trim();
             if (!content || !currentChatUser) return;
-
             input.value = '';
-            await sb.from('messages').insert({
-                sender_id: currentUser.id,
-                receiver_id: currentChatUser.id,
-                content: content
+            await supabase.from('messages').insert({
+                sender_id: currentUser.id, receiver_id: currentChatUser.id, content: content
             });
-        }
-
-        async function deleteChat() {
-            if (!currentChatUser) return;
-            if (!confirm('Yakin hapus semua chat dengan ' + currentChatUser.username + '?')) return;
-
-            document.getElementById('chatMenuModal').style.display = 'none';
-
-            await sb
-                .from('messages')
-                .delete()
-                .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`);
-
-            closeChat();
-            showNotification('Chat dihapus!');
         }
 
         function sendNotification(senderName, content) {
             if ('Notification' in window && Notification.permission === 'granted') {
                 if (document.hidden) {
-                    new Notification('Pesan dari ' + senderName, {
-                        body: content,
-                        icon: '/yor.png'
-                    });
+                    new Notification('Pesan dari ' + senderName, { body: content, icon: '/yor.png' });
                 }
             }
         }
