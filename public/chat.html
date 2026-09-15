@@ -102,9 +102,13 @@
 
     <!-- Load Supabase dari CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="/supabase.js"></script>
     <script>
-        const supabase = window.supabaseClient;
+        // Config langsung, gak pake supabase.js
+        const SUPABASE_URL = 'https://zezkqbfqqfhjuswfcjrc.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_C4zPmqecx7MmjIBYg_NtfQ_AlP_HmK_';
+
+        // Pake nama variable beda biar gak bentrok sama CDN
+        const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentUser = null;
         let currentProfile = null;
@@ -118,11 +122,10 @@
         let typingTimeout = null;
         let isTyping = false;
 
-        // Jalanin langsung pas script loaded
         (async () => {
             console.log('1. Init');
 
-            const { data: { session } } = await supabase.auth.getSession();
+            const { data: { session } } = await sb.auth.getSession();
             console.log('2. Session:', session ? 'ada' : 'kosong');
 
             if (!session) {
@@ -158,7 +161,7 @@
             document.getElementById('logoutBtn').addEventListener('click', async () => {
                 if (presenceChannel) presenceChannel.unsubscribe();
                 if (globalMessagesSubscription) globalMessagesSubscription.unsubscribe();
-                await supabase.auth.signOut();
+                await sb.auth.signOut();
                 window.location.href = '/';
             });
 
@@ -222,7 +225,7 @@
         })();
 
         function setupGlobalMessagesListener() {
-            globalMessagesSubscription = supabase
+            globalMessagesSubscription = sb
                 .channel('global-messages')
                 .on('postgres_changes', {
                     event: 'INSERT',
@@ -248,13 +251,13 @@
         }
 
         async function loadSenderNameAndNotify(senderId, content) {
-            const { data } = await supabase.from('profiles')
+            const { data } = await sb.from('profiles')
                 .select('username').eq('id', senderId).single();
             if (data) sendNotification(data.username, content);
         }
 
         async function loadMyProfile() {
-            const { data, error } = await supabase.from('profiles')
+            const { data, error } = await sb.from('profiles')
                 .select('*').eq('id', currentUser.id).single();
 
             if (error) {
@@ -275,7 +278,7 @@
         }
 
         function setupPresence() {
-            presenceChannel = supabase.channel('online-users', {
+            presenceChannel = sb.channel('online-users', {
                 config: { presence: { key: currentUser.id } }
             });
 
@@ -320,7 +323,7 @@
         async function loadChatList() {
             const list = document.getElementById('userList');
 
-            const { data: messages, error } = await supabase
+            const { data: messages, error } = await sb
                 .from('messages')
                 .select('*')
                 .or(`sender_id.eq.${currentUser.id},receiver_id.eq.${currentUser.id}`)
@@ -343,7 +346,7 @@
                 if (m.receiver_id !== currentUser.id) userIds.add(m.receiver_id);
             });
 
-            const { data: profiles } = await supabase
+            const { data: profiles } = await sb
                 .from('profiles')
                 .select('*')
                 .in('id', Array.from(userIds));
@@ -413,7 +416,7 @@
                 return;
             }
 
-            const { data, error: err } = await supabase
+            const { data, error: err } = await sb
                 .from('profiles').select('*').eq('phone_number', phone).single();
 
             if (err || !data) {
@@ -450,7 +453,7 @@
             updateAllOnlineStatus();
 
             if (messagesSubscription) messagesSubscription.unsubscribe();
-            messagesSubscription = supabase
+            messagesSubscription = sb
                 .channel('messages-channel-' + userId)
                 .on('postgres_changes', {
                     event: 'INSERT',
@@ -466,7 +469,7 @@
                 .subscribe();
 
             if (typingChannel) typingChannel.unsubscribe();
-            typingChannel = supabase.channel('typing-' + [currentUser.id, userId].sort().join('-'));
+            typingChannel = sb.channel('typing-' + [currentUser.id, userId].sort().join('-'));
             typingChannel
                 .on('broadcast', { event: 'typing' }, (payload) => {
                     if (payload.payload.from === currentChatUser.id && payload.payload.to === currentUser.id) {
@@ -497,7 +500,7 @@
         }
 
         async function loadMessages() {
-            const { data } = await supabase
+            const { data } = await sb
                 .from('messages')
                 .select('*')
                 .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`)
@@ -511,7 +514,7 @@
         async function markAsRead() {
             if (!currentChatUser) return;
             
-            const { error } = await supabase
+            const { error } = await sb
                 .from('messages')
                 .update({ is_read: true })
                 .eq('sender_id', currentChatUser.id)
@@ -553,7 +556,7 @@
             if (!content || !currentChatUser) return;
 
             input.value = '';
-            await supabase.from('messages').insert({
+            await sb.from('messages').insert({
                 sender_id: currentUser.id,
                 receiver_id: currentChatUser.id,
                 content: content
@@ -566,7 +569,7 @@
 
             document.getElementById('chatMenuModal').style.display = 'none';
 
-            await supabase
+            await sb
                 .from('messages')
                 .delete()
                 .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`);
