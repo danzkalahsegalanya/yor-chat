@@ -8,7 +8,6 @@
 </head>
 <body class="chat-page">
     <div class="chat-container">
-        <!-- SIDEBAR -->
         <div class="sidebar">
             <div class="sidebar-header">
                 <div class="user-info" id="userProfileBtn" style="cursor:pointer;">
@@ -21,29 +20,27 @@
                 <button id="logoutBtn" class="logout-btn">Logout</button>
             </div>
 
-            <!-- NOMOR SAYA -->
             <div class="my-number-box">
-                <div class="my-number-label">📱 Nomor Saya</div>
-                <div class="my-number" id="myNumber">-</div>
+                <div>
+                    <div class="my-number-label">📱 Nomor Saya</div>
+                    <div class="my-number" id="myNumber">-</div>
+                </div>
                 <button class="copy-number-btn" id="copyNumberBtn">
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
                     Copy
                 </button>
             </div>
 
-            <!-- TOMBOL NEW CHAT -->
             <button class="new-chat-btn" id="newChatBtn">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
                 Chat Baru
             </button>
 
-            <!-- LIST CHAT -->
             <div class="user-list" id="userList">
                 <div class="loading-small">Loading chats...</div>
             </div>
         </div>
 
-        <!-- CHAT AREA -->
         <div class="chat-area">
             <div id="emptyChat" class="empty-chat">
                 <div class="empty-icon">💬</div>
@@ -54,14 +51,22 @@
             <div id="chatRoom" style="display:none;">
                 <div class="chat-header">
                     <button class="back-btn" id="backBtn">←</button>
-                    <div class="chat-avatar" id="chatAvatar">🌸</div>
-                    <div>
-                        <div class="chat-username" id="chatUsername">-</div>
-                        <div class="chat-phone-small" id="chatPhone">-</div>
+                    <div class="chat-avatar-wrap">
+                        <div class="chat-avatar" id="chatAvatar">🌸</div>
+                        <span class="online-dot" id="chatOnlineDot"></span>
                     </div>
+                    <div style="flex:1;">
+                        <div class="chat-username" id="chatUsername">-</div>
+                        <div class="chat-phone-small" id="chatStatus">-</div>
+                    </div>
+                    <button class="menu-small-btn" id="chatMenuBtn">⋮</button>
                 </div>
 
                 <div class="messages" id="messages"></div>
+
+                <div class="typing-indicator" id="typingIndicator" style="display:none;">
+                    <span></span><span></span><span></span> Lagi ngetik...
+                </div>
 
                 <div class="chat-input-area">
                     <input type="text" id="messageInput" placeholder="Ketik pesan...">
@@ -85,12 +90,30 @@
         </div>
     </div>
 
+    <!-- MODAL CHAT MENU -->
+    <div class="modal" id="chatMenuModal">
+        <div class="modal-box">
+            <h3>Menu Chat</h3>
+            <button class="modal-menu-btn" id="deleteChatBtn">
+                🗑️ Hapus Chat
+            </button>
+            <button class="modal-menu-btn cancel" id="cancelMenuBtn">
+                ❌ Batal
+            </button>
+        </div>
+    </div>
+
     <script src="/supabase.js"></script>
     <script>
         let currentUser = null;
         let currentProfile = null;
         let currentChatUser = null;
         let messagesSubscription = null;
+        let presenceChannel = null;
+        let typingChannel = null;
+        let onlineCheckInterval = null;
+        let typingTimeout = null;
+        let isTyping = false;
 
         window.addEventListener('supabase-ready', async () => {
             const { data: { session } } = await window.supabase.auth.getSession();
@@ -102,9 +125,16 @@
             currentUser = session.user;
             await loadMyProfile();
             await loadChatList();
+            setupPresence();
+
+            // Minta izin notifikasi
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
 
             // Event listeners
             document.getElementById('logoutBtn').addEventListener('click', async () => {
+                if (presenceChannel) presenceChannel.unsubscribe();
                 await window.supabase.auth.signOut();
                 window.location.href = '/';
             });
@@ -141,13 +171,33 @@
                 if (e.key === 'Enter') sendMessage();
             });
 
-            document.getElementById('backBtn').addEventListener('click', () => {
-                document.getElementById('chatRoom').style.display = 'none';
-                document.getElementById('emptyChat').style.display = 'flex';
-                currentChatUser = null;
-                if (messagesSubscription) messagesSubscription.unsubscribe();
-                loadChatList();
+            document.getElementById('messageInput').addEventListener('input', () => {
+                if (!currentChatUser) return;
+                if (!isTyping) {
+                    isTyping = true;
+                    typingChannel.send({
+                        type: 'broadcast',
+                        event: 'typing',
+                        payload: { from: currentUser.id, to: currentChatUser.id }
+                    });
+                }
+                clearTimeout(typingTimeout);
+                typingTimeout = setTimeout(() => {
+                    isTyping = false;
+                }, 2000);
             });
+
+            document.getElementById('backBtn').addEventListener('click', closeChat);
+
+            document.getElementById('chatMenuBtn').addEventListener('click', () => {
+                document.getElementById('chatMenuModal').style.display = 'flex';
+            });
+
+            document.getElementById('cancelMenuBtn').addEventListener('click', () => {
+                document.getElementById('chatMenuModal').style.display = 'none';
+            });
+
+            document.getElementById('deleteChatBtn').addEventListener('click', deleteChat);
         });
 
         async function loadMyProfile() {
@@ -168,6 +218,58 @@
             }
         }
 
+        // ========== PRESENCE (ONLINE STATUS) ==========
+        function setupPresence() {
+            presenceChannel = window.supabase.channel('online-users', {
+                config: { presence: { key: currentUser.id } }
+            });
+
+            presenceChannel
+                .on('presence', { event: 'sync' }, () => {
+                    updateAllOnlineStatus();
+                })
+                .subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await presenceChannel.track({
+                            user_id: currentUser.id,
+                            online_at: new Date().toISOString()
+                        });
+                    }
+                });
+        }
+
+        function updateAllOnlineStatus() {
+            if (!presenceChannel) return;
+            const state = presenceChannel.presenceState();
+            const onlineUsers = Object.keys(state);
+
+            // Update sidebar
+            document.querySelectorAll('.user-item').forEach(item => {
+                const userId = item.dataset.id;
+                const dot = item.querySelector('.online-dot');
+                if (dot) {
+                    if (onlineUsers.includes(userId)) {
+                        dot.classList.add('online');
+                    } else {
+                        dot.classList.remove('online');
+                    }
+                }
+            });
+
+            // Update chat header
+            if (currentChatUser) {
+                const dot = document.getElementById('chatOnlineDot');
+                if (onlineUsers.includes(currentChatUser.id)) {
+                    dot.classList.add('online');
+                    document.getElementById('chatStatus').textContent = 'Online';
+                } else {
+                    dot.classList.remove('online');
+                    document.getElementById('chatStatus').textContent = 'Offline';
+                }
+            }
+        }
+
+        // ========== LOAD CHAT LIST ==========
         async function loadChatList() {
             const list = document.getElementById('userList');
             list.innerHTML = '<div class="loading-small">Loading chats...</div>';
@@ -183,7 +285,6 @@
                 return;
             }
 
-            // Dapetin unique user IDs
             const userIds = new Set();
             messages.forEach(m => {
                 if (m.sender_id !== currentUser.id) userIds.add(m.sender_id);
@@ -200,20 +301,39 @@
                 return;
             }
 
+            // Hitung unread
+            const presenceState = presenceChannel ? presenceChannel.presenceState() : {};
+            const onlineUsers = Object.keys(presenceState);
+
             list.innerHTML = profiles.map(u => {
-                const lastMsg = messages.find(m =>
-                    (m.sender_id === u.id || m.receiver_id === u.id)
+                const userMessages = messages.filter(m =>
+                    (m.sender_id === u.id && m.receiver_id === currentUser.id) ||
+                    (m.receiver_id === u.id && m.sender_id === currentUser.id)
                 );
+                const lastMsg = userMessages[0];
+                const unreadCount = userMessages.filter(m =>
+                    m.sender_id === u.id && m.receiver_id === currentUser.id && !m.is_read
+                ).length;
+
                 const avatarHtml = u.avatar_url
                     ? '<img src="' + u.avatar_url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">'
                     : '🌸';
 
+                const isOnline = onlineUsers.includes(u.id);
+                const badgeHtml = unreadCount > 0
+                    ? '<div class="unread-badge">' + unreadCount + '</div>'
+                    : '';
+
                 return '<div class="user-item" data-id="' + u.id + '" data-username="' + u.username + '" data-phone="' + (u.phone_number || '') + '" data-avatar="' + (u.avatar_url || '') + '">' +
-                    '<div class="user-item-avatar">' + avatarHtml + '</div>' +
+                    '<div class="user-item-avatar">' +
+                        avatarHtml +
+                        '<span class="online-dot ' + (isOnline ? 'online' : '') + '"></span>' +
+                    '</div>' +
                     '<div style="flex:1;overflow:hidden;">' +
                         '<div class="user-item-name">' + u.username + '</div>' +
                         '<div class="user-item-status">' + (lastMsg ? truncate(lastMsg.content, 25) : 'Mulai chat') + '</div>' +
                     '</div>' +
+                    badgeHtml +
                 '</div>';
             }).join('');
 
@@ -274,7 +394,7 @@
             document.getElementById('emptyChat').style.display = 'none';
             document.getElementById('chatRoom').style.display = 'flex';
             document.getElementById('chatUsername').textContent = username;
-            document.getElementById('chatPhone').textContent = phone || '';
+            document.getElementById('chatStatus').textContent = phone || '';
 
             if (avatar) {
                 document.getElementById('chatAvatar').innerHTML = '<img src="' + avatar + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">';
@@ -283,7 +403,10 @@
             }
 
             await loadMessages();
+            await markAsRead();
+            updateAllOnlineStatus();
 
+            // Subscribe ke pesan baru
             if (messagesSubscription) messagesSubscription.unsubscribe();
             messagesSubscription = window.supabase
                 .channel('messages-channel-' + userId)
@@ -296,9 +419,47 @@
                     if ((msg.sender_id === currentUser.id && msg.receiver_id === currentChatUser.id) ||
                         (msg.sender_id === currentChatUser.id && msg.receiver_id === currentUser.id)) {
                         appendMessage(msg);
+                        if (msg.sender_id === currentChatUser.id) {
+                            markAsRead();
+                            sendNotification(currentChatUser.username, msg.content);
+                        }
                     }
                 })
                 .subscribe();
+
+            // Subscribe ke typing indicator
+            if (typingChannel) typingChannel.unsubscribe();
+            typingChannel = window.supabase.channel('typing-' + [currentUser.id, userId].sort().join('-'));
+            typingChannel
+                .on('broadcast', { event: 'typing' }, (payload) => {
+                    if (payload.payload.from === currentChatUser.id && payload.payload.to === currentUser.id) {
+                        showTypingIndicator();
+                    }
+                })
+                .subscribe();
+
+            // Start online check interval
+            if (onlineCheckInterval) clearInterval(onlineCheckInterval);
+            onlineCheckInterval = setInterval(updateAllOnlineStatus, 10000);
+        }
+
+        function closeChat() {
+            document.getElementById('chatRoom').style.display = 'none';
+            document.getElementById('emptyChat').style.display = 'flex';
+            currentChatUser = null;
+            if (messagesSubscription) messagesSubscription.unsubscribe();
+            if (typingChannel) typingChannel.unsubscribe();
+            if (onlineCheckInterval) clearInterval(onlineCheckInterval);
+            loadChatList();
+        }
+
+        function showTypingIndicator() {
+            const indicator = document.getElementById('typingIndicator');
+            indicator.style.display = 'flex';
+            clearTimeout(indicator._timeout);
+            indicator._timeout = setTimeout(() => {
+                indicator.style.display = 'none';
+            }, 3000);
         }
 
         async function loadMessages() {
@@ -311,6 +472,16 @@
             const box = document.getElementById('messages');
             box.innerHTML = '';
             if (data) data.forEach(appendMessage);
+        }
+
+        async function markAsRead() {
+            if (!currentChatUser) return;
+            await window.supabase
+                .from('messages')
+                .update({ is_read: true })
+                .eq('sender_id', currentChatUser.id)
+                .eq('receiver_id', currentUser.id)
+                .eq('is_read', false);
         }
 
         function appendMessage(msg) {
@@ -334,6 +505,32 @@
                 receiver_id: currentChatUser.id,
                 content: content
             });
+        }
+
+        async function deleteChat() {
+            if (!currentChatUser) return;
+            if (!confirm('Yakin hapus semua chat dengan ' + currentChatUser.username + '?')) return;
+
+            document.getElementById('chatMenuModal').style.display = 'none';
+
+            await window.supabase
+                .from('messages')
+                .delete()
+                .or(`and(sender_id.eq.${currentUser.id},receiver_id.eq.${currentChatUser.id}),and(sender_id.eq.${currentChatUser.id},receiver_id.eq.${currentUser.id})`);
+
+            closeChat();
+            showNotification('Chat dihapus!');
+        }
+
+        function sendNotification(senderName, content) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                if (document.hidden) {
+                    new Notification('Pesan dari ' + senderName, {
+                        body: content,
+                        icon: '/yor.png'
+                    });
+                }
+            }
         }
 
         function showNotification(message) {
