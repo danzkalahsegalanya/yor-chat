@@ -61,13 +61,11 @@
     </div>
 
     <script src="/supabase.js"></script>
-    <script>
-        let currentUser = null;
-        let currentProfile = null;
-        let selectedFile = null;
-
-        window.addEventListener('supabase-ready', async () => {
-            const { data: { session } } = await window.supabase.auth.getSession();
+<script>
+    let currentUser = null;
+    ...
+    window.addEventListener('supabase-ready', async () => {
+        const { data: { session } } = await window.supabaseClient.auth.getSession();
             if (!session) {
                 window.location.href = '/login.html';
                 return;
