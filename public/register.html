@@ -41,12 +41,14 @@
 
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
+                error.classList.remove('show');
+                success.classList.remove('show');
+
                 const username = document.getElementById('username').value.trim().toLowerCase();
                 const fullName = document.getElementById('fullName').value.trim();
                 const email = document.getElementById('email').value;
                 const password = document.getElementById('password').value;
 
-                // Validasi username
                 if (!/^[a-z0-9_]+$/.test(username)) {
                     error.textContent = 'Username cuma boleh huruf kecil, angka, dan underscore (_)';
                     error.classList.add('show');
@@ -59,8 +61,7 @@
                     return;
                 }
 
-                // Register ke Supabase Auth
-                const { data, error: err } = await window.supabase.auth.signUp({
+                const { data, error: err } = await window.supabaseClient.auth.signUp({
                     email, password
                 });
 
@@ -70,9 +71,8 @@
                     return;
                 }
 
-                // Insert profile (nomor bakal auto-generate dari trigger)
                 if (data.user) {
-                    const { error: profileErr } = await window.supabase.from('profiles').insert({
+                    const { error: profileErr } = await window.supabaseClient.from('profiles').insert({
                         id: data.user.id,
                         username: username,
                         full_name: fullName || username
@@ -84,11 +84,8 @@
                         return;
                     }
 
-                    // Cek nomor yang dikasih
-                    const { data: profile } = await window.supabase.from('profiles')
-                        .select('phone_number')
-                        .eq('id', data.user.id)
-                        .single();
+                    const { data: profile } = await window.supabaseClient.from('profiles')
+                        .select('phone_number').eq('id', data.user.id).single();
 
                     if (profile && profile.phone_number) {
                         success.textContent = 'Berhasil daftar! Nomor lo: ' + profile.phone_number + '. Simpan nomor ini ya!';
